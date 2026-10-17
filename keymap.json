@@ -1,5 +1,5 @@
 {
-  "_comment": "Each app maps gestures to an action: a key spec (\"cmd+d\"), \"passthrough\" to forward to your media player, or \"ignore\". Apps not listed here are left alone entirely - the Now Playing slot is released when they are focused, so your media keys behave normally.",
+  "_comment": "An action is a key spec, a comma-separated sequence with pauses (\"cmd+d, 600ms, return\"), \"passthrough\" to forward to your media player, or \"ignore\". <gesture>Alternate gives a gesture a second action that successive presses alternate to. Keys are bundle ids; apps not listed are left alone. See the README.",
   "inputDevice": "MacBook Pro Microphone",
   "com.microsoft.VSCode": {
     "single": "cmd+d",

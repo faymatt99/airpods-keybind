@@ -137,7 +137,7 @@ struct AppBinding {
 
 let defaultConfigJSON = """
 {
-  "_comment": "An action is a key spec, a comma-separated sequence with pauses (\\"cmd+d, 600ms, return\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". <gesture>Alternate gives a gesture a second action that successive presses alternate to. Apps not listed are left alone. Requires voice.mode \\"tap\\" in ~/.claude/settings.json; see the README.",
+  "_comment": "An action is a key spec, a comma-separated sequence with pauses (\\"cmd+d, 600ms, return\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". <gesture>Alternate gives a gesture a second action that successive presses alternate to. Keys are bundle ids; apps not listed are left alone. See the README.",
   "inputDevice": "MacBook Pro Microphone",
   "com.anthropic.claudefordesktop": {
     "single": "cmd+d",
