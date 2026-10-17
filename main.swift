@@ -450,7 +450,11 @@ final class Bridge: NSObject, NSApplicationDelegate {
 
     private func syncSlot() {
         let shouldHold = binding() != nil
-        guard shouldHold != holdingSlot else { return }
+        let transition = shouldHold != holdingSlot
+        // Re-assert on every activation of a configured app, not only on the transition
+        // into one: switching between two configured apps used to skip the claim entirely,
+        // leaving the slot with whoever took it in the meantime until the next heartbeat.
+        guard transition || shouldHold else { return }
         holdingSlot = shouldHold
 
         let info = MPNowPlayingInfoCenter.default()
@@ -458,7 +462,9 @@ final class Bridge: NSObject, NSApplicationDelegate {
             player?.play()
             info.nowPlayingInfo = nowPlayingPayload()
             info.playbackState = .playing
-            print("[\(stamp())] claimed slot (\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")
+            if transition {
+                print("[\(stamp())] claimed slot (\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")
+            }
         } else {
             player?.pause()
             info.playbackState = .stopped

@@ -236,5 +236,13 @@ works this way* before assuming the config is wrong.
   in the message, so no hook recovers it.
 - Passthrough only reaches scriptable players. Browser audio (YouTube, web players) has no
   AppleScript surface and will not respond.
-- One app owns Now Playing at a time. Gestures bound to keys are not available to music
-  while a configured app is focused — hence `passthrough` for the ones you want to keep.
+- **Gestures stop working while another app is actively playing audio.** One app owns the
+  Now Playing slot at a time, and the system appears to favour an app that is genuinely
+  producing audio over this one, which holds the slot with a silent file. Re-asserting on
+  a heartbeat does not win it back: observed with Spotify playing, presses kept going to
+  Spotify until it was quit. Pausing or quitting the other player restores the gestures.
+  Treated as a constraint rather than a bug — the slot is single-occupancy and there is no
+  public API to be notified of losing it, let alone to take it back.
+- Gestures bound to keys are not available to music while a configured app is focused —
+  hence `passthrough` for the ones you want to keep. Note this only applies while we hold
+  the slot, so it does not help in the case above.
