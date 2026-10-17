@@ -204,7 +204,9 @@ The desktop app has no such setting, but its Code tab carries the keybindings sy
       ]
     }
 
-That file is read by every Claude Code surface, so it changes terminal sessions too.
+`Chat` there is a focus context — the prompt input — not a product. The file is read by
+the Claude Code binary, so it covers terminal sessions and the desktop Code tab, but
+**not** the VS Code extension, which has its own keybinding system and the setting above.
 
 ### Pinning the microphone
 
