@@ -30,7 +30,9 @@ arrives here first, and each one is dispatched per the config for the app that c
 has focus — to a keystroke, passed through to the real media player, or dropped.
 
 The slot is claimed only while a configured app is frontmost and released as soon as you
-switch away, and re-asserted on a heartbeat so another media app cannot quietly take it.
+switch away, and re-asserted whenever such an app activates and on a heartbeat. That
+recovers it from an idle media app, but not from one that is actively playing audio — see
+*Known limits*.
 
 ## Build and run
 
