@@ -11,6 +11,7 @@
 import Cocoa
 import AVFoundation
 import MediaPlayer
+import CoreAudio
 
 setvbuf(stdout, nil, _IONBF, 0)
 
@@ -96,6 +97,7 @@ struct AppBinding {
 let defaultConfigJSON = """
 {
   "_comment": "Each app maps gestures to an action: a key spec (\\"cmd+d\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". Apps not listed here are left alone entirely - the Now Playing slot is released when they are focused, so your media keys behave normally.",
+  "inputDevice": "MacBook Pro Microphone",
   "com.microsoft.VSCode": {
     "single": "cmd+d",
     "double": "passthrough",
@@ -122,7 +124,15 @@ let defaultConfigJSON = """
 let configDir = ("~/.config/airpods-keybind" as NSString).expandingTildeInPath
 let configPath = configDir + "/keymap.json"
 
-func loadConfig() -> [String: AppBinding] {
+struct Config {
+    var apps: [String: AppBinding] = [:]
+    /// Device name to pin the default input to while a configured app is focused.
+    var inputDevice: String?
+}
+
+let reservedKeys: Set<String> = ["inputDevice"]
+
+func loadConfig() -> Config {
     if !FileManager.default.fileExists(atPath: configPath) {
         try? FileManager.default.createDirectory(atPath: configDir,
                                                  withIntermediateDirectories: true)
@@ -132,12 +142,13 @@ func loadConfig() -> [String: AppBinding] {
 
     guard let data = FileManager.default.contents(atPath: configPath),
           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        print("could not parse \(configPath) — no apps bound"); return [:]
+        print("could not parse \(configPath) — no apps bound"); return Config()
     }
 
-    var result: [String: AppBinding] = [:]
+    var config = Config()
+    config.inputDevice = root["inputDevice"] as? String
     for (bundleId, value) in root {
-        if bundleId.hasPrefix("_") { continue }
+        if bundleId.hasPrefix("_") || reservedKeys.contains(bundleId) { continue }
         guard let spec = value as? [String: String] else {
             print("skipping \(bundleId): expected an object of gesture -> action"); continue
         }
@@ -151,16 +162,105 @@ func loadConfig() -> [String: AppBinding] {
             actions[gesture] = action
         }
         guard !actions.isEmpty else { continue }
-        result[bundleId] = AppBinding(actions: actions, passthroughApp: spec["passthroughApp"])
+        config.apps[bundleId] = AppBinding(actions: actions, passthroughApp: spec["passthroughApp"])
     }
-    return result
+    return config
+}
+
+
+// MARK: - Audio devices
+
+/// macOS stores no lasting default-input preference: it re-evaluates whenever the device
+/// topology changes, and Bluetooth headsets win. So reconnecting AirPods silently takes
+/// the mic back, which flips them into the HFP profile and kills the transport commands
+/// this tool depends on. Hence: keep putting the default input back.
+enum AudioDevices {
+    static func all() -> [AudioDeviceID] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
+        return ids
+    }
+
+    static func name(of id: AudioDeviceID) -> String {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<CFString?>.size)
+        var cf: CFString?
+        let status = withUnsafeMutablePointer(to: &cf) {
+            AudioObjectGetPropertyData(id, &addr, 0, nil, &size, $0)
+        }
+        guard status == noErr, let s = cf as String? else { return "" }
+        return s
+    }
+
+    static func hasInput(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return false }
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { raw.deallocate() }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, raw) == noErr else { return false }
+        let list = UnsafeMutableAudioBufferListPointer(raw.assumingMemoryBound(to: AudioBufferList.self))
+        return list.reduce(0) { $0 + Int($1.mNumberChannels) } > 0
+    }
+
+    static func defaultInput() -> AudioDeviceID {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id)
+        return id
+    }
+
+    @discardableResult
+    static func setDefaultInput(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var value = id
+        return AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &value) == noErr
+    }
+
+    /// Watch both the default-input selection and the device list.
+    static func watch(_ handler: @escaping () -> Void) {
+        for selector in [kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDevices] {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main
+            ) { _, _ in handler() }
+        }
+    }
 }
 
 // MARK: - Bridge
 
 final class Bridge: NSObject, NSApplicationDelegate {
     private var player: AVAudioPlayer?
-    private var config: [String: AppBinding] = [:]
+    private var config = Config()
+    private var warnedMissingInput = false
     private var holdingSlot = false
     private var lastFire: [Gesture: Date] = [:]
 
@@ -190,11 +290,16 @@ final class Bridge: NSObject, NSApplicationDelegate {
             self, selector: #selector(frontmostChanged),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
 
+        if let wanted = config.inputDevice {
+            print("pinning default input to \"\(wanted)\" while a configured app is focused")
+            AudioDevices.watch { [weak self] in self?.enforceInput() }
+        }
+
         syncSlot()
         startHeartbeat()
 
         print("airpods-keybind running. Config: \(configPath)")
-        for (bundleId, binding) in config.sorted(by: { $0.key < $1.key }) {
+        for (bundleId, binding) in config.apps.sorted(by: { $0.key < $1.key }) {
             let summary = Gesture.allCases.compactMap { g in
                 binding.actions[g].map { "\(g.rawValue)=\($0.label)" }
             }.joined(separator: "  ")
@@ -223,11 +328,36 @@ final class Bridge: NSObject, NSApplicationDelegate {
 
     // MARK: Slot ownership
 
-    @objc private func frontmostChanged() { syncSlot() }
+    @objc private func frontmostChanged() {
+        syncSlot()
+        enforceInput()
+    }
+
+    /// Put the default input back to the configured device. Scoped to "a configured app is
+    /// focused" so calls in other apps keep using whatever mic you chose there.
+    private func enforceInput() {
+        guard let wanted = config.inputDevice, binding() != nil else { return }
+        let current = AudioDevices.defaultInput()
+        guard AudioDevices.name(of: current) != wanted else { return }
+        guard let target = AudioDevices.all().first(where: {
+            AudioDevices.hasInput($0) && AudioDevices.name(of: $0) == wanted
+        }) else {
+            if !warnedMissingInput {
+                warnedMissingInput = true
+                let names = AudioDevices.all().filter(AudioDevices.hasInput).map(AudioDevices.name(of:))
+                print("input device \"\(wanted)\" not found. Available: \(names.joined(separator: ", "))")
+            }
+            return
+        }
+        let was = AudioDevices.name(of: current)
+        if AudioDevices.setDefaultInput(target) {
+            print("[\(stamp())] default input -> \(wanted) (was \(was.isEmpty ? "unknown" : was))")
+        }
+    }
 
     private func binding() -> AppBinding? {
         guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return nil }
-        return config[id]
+        return config.apps[id]
     }
 
     private func nowPlayingPayload() -> [String: Any] {
@@ -265,6 +395,7 @@ final class Bridge: NSObject, NSApplicationDelegate {
             let info = MPNowPlayingInfoCenter.default()
             if info.playbackState != .playing { info.playbackState = .playing }
             info.nowPlayingInfo = self.nowPlayingPayload()
+            self.enforceInput()
         }
     }
 

@@ -76,6 +76,23 @@ focused, so your media keys behave normally.
 Passthrough auto-detects Spotify, then Music. Pin it per app with
 `"passthroughApp": "Spotify"`.
 
+### Pinning the microphone
+
+    "inputDevice": "MacBook Pro Microphone"
+
+Starting dictation opens the mic, which flips the AirPods from A2DP into the HFP headset
+profile. In HFP a stem press is telephony control (mute), not a transport command — macOS
+reports *"cannot control mic with AirPods Pro"* and nothing reaches this app, so a second
+press cannot stop dictation. Keeping the mic on the built-in device avoids the profile
+switch entirely, and keeps output audio out of 24 kHz while recording.
+
+macOS stores no lasting default-input preference — it re-evaluates whenever the device
+topology changes, and Bluetooth wins, so reconnecting AirPods takes the mic back. This
+watches CoreAudio for those changes and puts the default input back.
+
+Scoped to "a configured app is focused", so calls in other apps are not re-pinned. Note it
+does **not** restore the previous device on release or quit. Omit the key to disable.
+
 VS Code's `cmd+d` is verified from the extension's own key handler; `space` is the TUI's
 `voice:pushToTalk` default. The Claude desktop app's voice key is **unverified** — flip it
 in the config if a press misbehaves there.
