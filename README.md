@@ -1,6 +1,14 @@
 # airpods-keybind
 
-Single AirPods stem press toggles Claude Code voice dictation.
+AirPods stem presses become keystrokes in whatever macOS app has focus.
+
+Single, double and triple press each map to a key, a sequence of keys with pauses, or a
+passthrough to your media player — per focused app. Nothing is hardcoded to a particular
+application.
+
+The obvious use is hands-free dictation: give any push-to-talk or voice tool a shortcut,
+bind a gesture to it, and talk without reaching for the keyboard. But the gestures are
+just keystrokes, so they can drive anything the focused app responds to.
 
 ## Why it works this way
 
@@ -37,25 +45,6 @@ To see what it is doing:
 
     ./build/AirPodsKeybind.app/Contents/MacOS/AirPodsKeybind
 
-## Requires
-
-Voice mode in `~/.claude/settings.json` — shared by the Claude Code TUI and the VS Code
-extension:
-
-    {
-      "voice": {
-        "enabled": true,
-        "mode": "tap"
-      }
-    }
-
-`mode` must be `"tap"`. The default is `"hold"` (hold-to-talk), and an AirPods press is
-instantaneous — it cannot express a hold, so on the default the keystroke does nothing
-useful. `"tap"` is tap to start, tap to stop.
-
-`voice.autoSubmit` does **not** help here: it is documented as hold-mode only. Tap mode
-stops recording without submitting, which is what `autoSubmitOnStop` below is for.
-
 ## Configuration
 
 `keymap.json` in this directory, written with defaults on first run. Kept next to the
@@ -65,8 +54,12 @@ Resolution order: `$AIRPODS_KEYBIND_CONFIG`, then this repo (detected by `build.
 sitting one level above the app bundle), then `~/.config/airpods-keybind/keymap.json` for
 when the app has been copied away from its repo.
 
-Each focused app maps gestures to actions. macOS does the multi-press detection, so each
-gesture arrives as its own command — no timing logic here.
+Keys are bundle identifiers. Find one with:
+
+    osascript -e 'id of app "Visual Studio Code"'
+
+macOS does the multi-press detection, so each gesture arrives as its own command — no
+timing logic here.
 
 | Gesture | Arrives as |
 | --- | --- |
@@ -89,30 +82,29 @@ focused, so your media keys behave normally.
 ### Alternating actions
 
 `<gesture>Alternate` gives a gesture a second action; successive presses alternate between
-the two. That is how one gesture both starts a toggle and, on the next press, runs a
-longer sequence:
+the two. That is how one gesture can both start something and, on the next press, run a
+different and longer sequence:
 
     "single": "cmd+d",
     "singleAlternate": "cmd+d, 600ms, return"
 
-Press once to start dictation. Press again and it stops, waits for the transcription to
-land, and submits. Nothing about dictation is special-cased in the code — it is the
-sequence that knows what to do.
+For a dictation tool bound to `cmd+d`: press once to start, press again to stop, wait for
+the transcription to land, and submit. The sequence carries that knowledge — dispatch has
+no notion of dictation.
 
 Two consequences of tracking alternation:
 
-- The pause is a guess at transcription latency. Too short submits a truncated prompt;
-  raise it if you see clipped messages.
+- A pause is a guess at how long the app needs. Too short and the follow-up key lands
+  early (for dictation: a truncated prompt). Raise it if you see that.
 - Pressing the key by hand desyncs the alternation. It resets when you leave the app, and
   goes stale after 120s.
 
-Keeping a plain submit on another gesture (`"double": "return"`) covers both cases.
+Binding the follow-up plainly on another gesture (`"double": "return"`) covers both cases.
 
 ### Examples
 
-**One gesture, stop and submit** — the default. Press to start, press again to stop, wait
-for the transcription, and send. Double press is a plain submit in case alternation
-desyncs; triple still skips tracks.
+**One gesture, start and finish** — press to start, press again to stop, wait, and submit.
+Double press is a plain submit in case alternation desyncs; triple still skips tracks.
 
     "com.microsoft.VSCode": {
       "single": "cmd+d",
@@ -121,8 +113,8 @@ desyncs; triple still skips tracks.
       "triple": "passthrough"
     }
 
-**No hidden state** — nothing to desync, at the cost of stopping on a different gesture
-than you started with. Single only ever starts; double stops and submits.
+**No hidden state** — nothing to desync, at the cost of finishing on a different gesture
+than you started with.
 
     "com.microsoft.VSCode": {
       "single": "cmd+d",
@@ -130,8 +122,8 @@ than you started with. Single only ever starts; double stops and submits.
       "triple": "passthrough"
     }
 
-**Music first** — dictation moved off the single press, so play/pause and track-skip behave
-exactly as they always did while coding.
+**Music first** — the action moved off the single press, so play/pause and track-skip
+behave exactly as they always did.
 
     "com.microsoft.VSCode": {
       "single": "passthrough",
@@ -139,8 +131,7 @@ exactly as they always did while coding.
       "triple": "cmd+d, 600ms, return"
     }
 
-**Terminal / TUI** — the TUI's voice key is `space` rather than `cmd+d`. Submit behaviour
-there may differ, so start without the alternate and add it once you have checked.
+**A terminal** — whatever key your tool uses there; `space` is the Claude Code TUI's.
 
     "com.apple.Terminal": {
       "single": "space",
@@ -148,9 +139,8 @@ there may differ, so start without the alternate and add it once you have checke
       "triple": "passthrough"
     }
 
-**Nothing to do with voice** — gestures are just keystrokes, so bind whatever the focused
-app understands. Here: interrupt on double, and swallow triple so a stray press does
-nothing.
+**Nothing to do with voice** — bind whatever the focused app understands. Here: interrupt
+on double, and swallow triple so a stray press does nothing.
 
     "com.microsoft.VSCode": {
       "single": "cmd+d",
@@ -162,6 +152,42 @@ nothing.
 
     "double": "cmd+d, 900ms, return, 200ms, shift+tab"
 
+## Using it with a dictation tool
+
+Two things decide whether a given tool works well.
+
+**It needs a toggle, not a hold.** A stem press is instantaneous and cannot express
+press-and-hold, so a tool whose shortcut is hold-to-talk will not work — the press
+registers as an immediate down-up. Look for a tap/toggle mode, or separate start and stop
+shortcuts, and bind those.
+
+**Pin the microphone.** Any tool that opens the AirPods mic flips them into the HFP
+profile, which kills the gestures mid-session. See below.
+
+Beyond that it is just a shortcut: set one in the tool's preferences (Wispr Flow,
+Superwhisper, macOS Dictation and similar all expose one), then bind a gesture to it.
+
+### Claude Code
+
+Voice settings live in `~/.claude/settings.json`, shared by the TUI and the VS Code
+extension:
+
+    {
+      "voice": {
+        "enabled": true,
+        "mode": "tap"
+      }
+    }
+
+`mode` must be `"tap"` — the default `"hold"` is hold-to-talk, which a press cannot
+express. `voice.autoSubmit` does not help either: it is documented as hold-mode only.
+Tap mode stops recording without submitting, which is what an alternating action or a
+sequence is for.
+
+The key differs by surface: `cmd+d` in the VS Code extension, verified from its own key
+handler, and `space` in the TUI (`voice:pushToTalk`). The Claude desktop app's key is
+**unverified** — flip it in the config if a press misbehaves there.
+
 ### Pinning the microphone
 
     "inputDevice": "MacBook Pro Microphone"
@@ -169,7 +195,7 @@ nothing.
 Starting dictation opens the mic, which flips the AirPods from A2DP into the HFP headset
 profile. In HFP a stem press is telephony control (mute), not a transport command — macOS
 reports *"cannot control mic with AirPods Pro"* and nothing reaches this app, so a second
-press cannot stop dictation. Keeping the mic on the built-in device avoids the profile
+press cannot stop anything. Keeping the mic on the built-in device avoids the profile
 switch entirely, and keeps output audio out of 24 kHz while recording.
 
 macOS stores no lasting default-input preference — it re-evaluates whenever the device
@@ -178,10 +204,6 @@ watches CoreAudio for those changes and puts the default input back.
 
 Scoped to "a configured app is focused", so calls in other apps are not re-pinned. Note it
 does **not** restore the previous device on release or quit. Omit the key to disable.
-
-VS Code's `cmd+d` is verified from the extension's own key handler; `space` is the TUI's
-`voice:pushToTalk` default. The Claude desktop app's voice key is **unverified** — flip it
-in the config if a press misbehaves there.
 
 ## Known limits
 
