@@ -205,6 +205,16 @@ watches CoreAudio for those changes and puts the default input back.
 Scoped to "a configured app is focused", so calls in other apps are not re-pinned. Note it
 does **not** restore the previous device on release or quit. Omit the key to disable.
 
+## Tested with
+
+- macOS 26.7 (build 25G229), MacBook Pro M4 Max (`Mac16,6`)
+- AirPods Pro, Bluetooth product ID `0x2024`, firmware `9A348`
+
+Everything here rests on undocumented behaviour — which layer a stem press reaches, how
+MediaRemote routes it, and how Bluetooth profile switching affects it. Apple can change
+any of that in a point release. If presses stop arriving, re-run the reasoning in *Why it
+works this way* before assuming the config is wrong.
+
 ## Known limits
 
 - **Left and right cannot be distinguished.** Both stems emit the same AVRCP command, and
