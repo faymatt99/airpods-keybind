@@ -147,8 +147,8 @@ let defaultConfigJSON = """
   },
   "com.microsoft.VSCode": {
     "single": "cmd+d",
-    "singleAlternate": "cmd+d, 1s, return",
-    "double": "return",
+    "singleAlternate": "cmd+d, 1s, cmd+return",
+    "double": "cmd+return",
     "triple": "passthrough"
   },
   "com.apple.Terminal": {

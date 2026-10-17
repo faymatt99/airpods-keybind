@@ -187,6 +187,11 @@ The key differs by surface: `cmd+d` in the VS Code extension, verified from its 
 handler, and `space` in the TUI (`voice:pushToTalk`). The Claude desktop app's key is
 **unverified** — flip it in the config if a press misbehaves there.
 
+The *submit* key differs too. The VS Code extension has a
+`claudeCode.useCtrlEnterToSend` setting: off (the default) Enter sends, on it is
+Cmd+Enter and Enter makes a newline. Match whichever you use, or the follow-up key in a
+sequence inserts a line break instead of sending.
+
 ### Pinning the microphone
 
     "inputDevice": "MacBook Pro Microphone"
