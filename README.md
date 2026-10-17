@@ -192,21 +192,15 @@ The *submit* key differs too. The VS Code extension has a
 Cmd+Enter and Enter makes a newline. Match whichever you use, or the follow-up key in a
 sequence inserts a line break instead of sending.
 
-The desktop app has no such setting, but its Code tab carries the keybindings system, so
-`~/.claude/keybindings.json` works on it. To match the VS Code behaviour there:
+The desktop app has no such setting. Its Code tab does carry the keybindings system, so
+`~/.claude/keybindings.json` is read there (and by terminal sessions, though not by the VS
+Code extension, which has its own). Note that reassigning a key does **not** override its
+default — user bindings are additive, so `"enter": "chat:newline"` leaves Enter still
+submitting. Unbinding with `"enter": null` works, but then Enter does nothing and newline
+falls back to `ctrl+j`. Verified on the version in *Tested with*.
 
-    {
-      "bindings": [
-        {
-          "context": "Chat",
-          "bindings": { "enter": "chat:newline", "cmd+return": "chat:submit" }
-        }
-      ]
-    }
-
-`Chat` there is a focus context — the prompt input — not a product. The file is read by
-the Claude Code binary, so it covers terminal sessions and the desktop Code tab, but
-**not** the VS Code extension, which has its own keybinding system and the setting above.
+Simplest is to leave the desktop app on Enter-to-send and bind `return` for it, which is
+what the defaults here do.
 
 ### Pinning the microphone
 
