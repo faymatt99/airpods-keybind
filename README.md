@@ -3,8 +3,7 @@
 AirPods stem presses become keystrokes in whatever macOS app has focus.
 
 Single, double and triple press each map to a key, a sequence of keys with pauses, or a
-passthrough to your media player — per focused app. Nothing is hardcoded to a particular
-application.
+passthrough to your media player, configurable per in-focus app.
 
 The obvious use is hands-free dictation: give any push-to-talk or voice tool a shortcut,
 bind a gesture to it, and talk without reaching for the keyboard. But the gestures are
