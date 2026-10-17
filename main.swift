@@ -92,6 +92,10 @@ struct AppBinding {
     var actions: [Gesture: Action]
     /// Optional bundle name for passthrough ("Spotify", "Music"); nil = auto-detect.
     var passthroughApp: String?
+    /// Key posted after a single press that STOPS dictation, so one gesture stops and
+    /// submits. Nil disables; the explicit submit gesture is the robust alternative.
+    var autoSubmitOnStop: KeySpec?
+    var autoSubmitDelay: TimeInterval = 0.6
 }
 
 let defaultConfigJSON = """
@@ -162,7 +166,17 @@ func loadConfig() -> Config {
             actions[gesture] = action
         }
         guard !actions.isEmpty else { continue }
-        config.apps[bundleId] = AppBinding(actions: actions, passthroughApp: spec["passthroughApp"])
+        var submitKey: KeySpec?
+        if let raw = spec["autoSubmitOnStop"] {
+            if case .key(let k)? = parseAction(raw) { submitKey = k }
+            else { print("skipping \(bundleId).autoSubmitOnStop: \"\(raw)\" is not a key spec") }
+        }
+        let delay = (spec["autoSubmitDelayMs"].flatMap(Double.init) ?? 600) / 1000.0
+        config.apps[bundleId] = AppBinding(
+            actions: actions,
+            passthroughApp: spec["passthroughApp"],
+            autoSubmitOnStop: submitKey,
+            autoSubmitDelay: delay)
     }
     return config
 }
@@ -261,6 +275,12 @@ final class Bridge: NSObject, NSApplicationDelegate {
     private var player: AVAudioPlayer?
     private var config = Config()
     private var warnedMissingInput = false
+    /// When the single press most recently STARTED dictation, per app. We are the only
+    /// thing sending the toggle, so parity tells us whether the next press stops it.
+    private var dictationStarted: [String: Date] = [:]
+    /// Assume dictation is no longer running after this long, to limit drift from a
+    /// manual keypress we never saw.
+    private let dictationStaleAfter: TimeInterval = 120
     private var holdingSlot = false
     private var lastFire: [Gesture: Date] = [:]
 
@@ -384,6 +404,7 @@ final class Bridge: NSObject, NSApplicationDelegate {
             player?.pause()
             info.playbackState = .stopped
             info.nowPlayingInfo = nil
+            dictationStarted.removeAll()
             print("[\(stamp())] released slot")
         }
     }
@@ -420,7 +441,23 @@ final class Bridge: NSObject, NSApplicationDelegate {
             print("[\(stamp())] \(gesture.rawValue) -> ignored")
         case .key(let spec):
             post(spec)
-            print("[\(stamp())] \(gesture.rawValue) -> \(spec.label)")
+            if gesture == .single, let submit = binding.autoSubmitOnStop,
+               let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
+                if let started = dictationStarted[bundleId],
+                   Date().timeIntervalSince(started) < dictationStaleAfter {
+                    dictationStarted[bundleId] = nil
+                    let ms = Int(binding.autoSubmitDelay * 1000)
+                    print("[\(stamp())] \(gesture.rawValue) -> \(spec.label) (stop) + \(submit.label) in \(ms)ms")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + binding.autoSubmitDelay) { [weak self] in
+                        self?.post(submit)
+                    }
+                } else {
+                    dictationStarted[bundleId] = Date()
+                    print("[\(stamp())] \(gesture.rawValue) -> \(spec.label) (start)")
+                }
+            } else {
+                print("[\(stamp())] \(gesture.rawValue) -> \(spec.label)")
+            }
         case .passthrough:
             let target = forwardToPlayer(gesture, preferred: binding.passthroughApp)
             print("[\(stamp())] \(gesture.rawValue) -> passthrough (\(target))")

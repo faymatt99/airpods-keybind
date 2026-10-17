@@ -76,6 +76,25 @@ focused, so your media keys behave normally.
 Passthrough auto-detects Spotify, then Music. Pin it per app with
 `"passthroughApp": "Spotify"`.
 
+### Stop and submit in one gesture
+
+    "autoSubmitOnStop": "return",
+    "autoSubmitDelayMs": "600"
+
+Tap mode stops recording but does not submit, so by default submitting is its own gesture.
+With these keys set, a single press that *stops* dictation is followed by the given key
+after the delay — one gesture to stop and send.
+
+This works by parity: since nothing else sends the toggle, the app knows whether the press
+it is about to send starts or stops. Two consequences worth knowing:
+
+- The delay is a guess at how long transcription takes to land. Too short submits a
+  truncated prompt. Raise `autoSubmitDelayMs` if you see clipped messages.
+- Pressing the toggle key by hand desyncs the parity. Tracking resets when you leave the
+  app, and assumes dictation ended after 120s.
+
+Keeping an explicit submit gesture bound as well (`"double": "return"`) covers both cases.
+
 ### Pinning the microphone
 
     "inputDevice": "MacBook Pro Microphone"
