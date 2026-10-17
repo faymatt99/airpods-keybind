@@ -77,6 +77,8 @@ gesture arrives as its own command — no timing logic here.
 An action is one of:
 
 - **a key spec** — `"cmd+d"`, `"space"`, `"shift+tab"`; posted to the focused app
+- **a sequence** — comma-separated steps with pauses: `"cmd+d, 600ms, return"`. A bare
+  number is milliseconds; `600ms` and `0.6s` also work.
 - **`"passthrough"`** — forwarded to your media player via AppleScript, so music keeps
   working while the slot is held
 - **`"ignore"`** — swallowed
@@ -84,35 +86,27 @@ An action is one of:
 Apps not listed are left alone entirely: the Now Playing slot is released when they are
 focused, so your media keys behave normally.
 
-    {
-      "com.microsoft.VSCode": {
-        "single": "cmd+d",
-        "double": "passthrough",
-        "triple": "passthrough"
-      }
-    }
+### Alternating actions
 
-Passthrough auto-detects Spotify, then Music. Pin it per app with
-`"passthroughApp": "Spotify"`.
+`<gesture>Alternate` gives a gesture a second action; successive presses alternate between
+the two. That is how one gesture both starts a toggle and, on the next press, runs a
+longer sequence:
 
-### Stop and submit in one gesture
+    "single": "cmd+d",
+    "singleAlternate": "cmd+d, 600ms, return"
 
-    "autoSubmitOnStop": "return",
-    "autoSubmitDelayMs": "600"
+Press once to start dictation. Press again and it stops, waits for the transcription to
+land, and submits. Nothing about dictation is special-cased in the code — it is the
+sequence that knows what to do.
 
-Tap mode stops recording but does not submit, so by default submitting is its own gesture.
-With these keys set, a single press that *stops* dictation is followed by the given key
-after the delay — one gesture to stop and send.
+Two consequences of tracking alternation:
 
-This works by parity: since nothing else sends the toggle, the app knows whether the press
-it is about to send starts or stops. Two consequences worth knowing:
+- The pause is a guess at transcription latency. Too short submits a truncated prompt;
+  raise it if you see clipped messages.
+- Pressing the key by hand desyncs the alternation. It resets when you leave the app, and
+  goes stale after 120s.
 
-- The delay is a guess at how long transcription takes to land. Too short submits a
-  truncated prompt. Raise `autoSubmitDelayMs` if you see clipped messages.
-- Pressing the toggle key by hand desyncs the parity. Tracking resets when you leave the
-  app, and assumes dictation ended after 120s.
-
-Keeping an explicit submit gesture bound as well (`"double": "return"`) covers both cases.
+Keeping a plain submit on another gesture (`"double": "return"`) covers both cases.
 
 ### Pinning the microphone
 

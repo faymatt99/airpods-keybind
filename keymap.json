@@ -3,17 +3,15 @@
   "inputDevice": "MacBook Pro Microphone",
   "com.microsoft.VSCode": {
     "single": "cmd+d",
+    "singleAlternate": "cmd+d, 600ms, return",
     "double": "return",
-    "triple": "passthrough",
-    "autoSubmitOnStop": "return",
-    "autoSubmitDelayMs": "600"
+    "triple": "passthrough"
   },
   "com.anthropic.claudefordesktop": {
     "single": "cmd+d",
+    "singleAlternate": "cmd+d, 600ms, return",
     "double": "return",
-    "triple": "passthrough",
-    "autoSubmitOnStop": "return",
-    "autoSubmitDelayMs": "600"
+    "triple": "passthrough"
   },
   "com.apple.Terminal": {
     "single": "space",

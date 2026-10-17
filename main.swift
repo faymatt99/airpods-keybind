@@ -43,16 +43,29 @@ struct KeySpec {
     let label: String
 }
 
-enum Action {
+/// One step of an action sequence: a keystroke, or a pause before the next step.
+enum Step {
     case key(KeySpec)
+    case delay(TimeInterval)
+
+    var label: String {
+        switch self {
+        case .key(let k):     return k.label
+        case .delay(let t):   return "\(Int(t * 1000))ms"
+        }
+    }
+}
+
+enum Action {
+    case sequence([Step])
     case passthrough
     case ignore
 
     var label: String {
         switch self {
-        case .key(let k):   return k.label
-        case .passthrough:  return "passthrough"
-        case .ignore:       return "ignore"
+        case .sequence(let steps): return steps.map(\.label).joined(separator: " -> ")
+        case .passthrough:         return "passthrough"
+        case .ignore:              return "ignore"
         }
     }
 }
@@ -65,15 +78,10 @@ let keyCodes: [String: CGKeyCode] = [
     "delete": 51, "up": 126, "down": 125, "left": 123, "right": 124,
 ]
 
-func parseAction(_ raw: String) -> Action? {
-    switch raw.lowercased() {
-    case "passthrough": return .passthrough
-    case "ignore", "none", "": return .ignore
-    default: break
-    }
+func parseKey(_ spec: String) -> KeySpec? {
     var flags: CGEventFlags = []
     var key: String?
-    for part in raw.lowercased().split(separator: "+").map(String.init) {
+    for part in spec.lowercased().split(separator: "+").map(String.init) {
         switch part {
         case "cmd", "command", "meta": flags.insert(.maskCommand)
         case "ctrl", "control":        flags.insert(.maskControl)
@@ -83,7 +91,36 @@ func parseAction(_ raw: String) -> Action? {
         }
     }
     guard let k = key, let code = keyCodes[k] else { return nil }
-    return .key(KeySpec(keyCode: code, flags: flags, label: raw))
+    return KeySpec(keyCode: code, flags: flags, label: spec)
+}
+
+/// "cmd+d" | "cmd+d, 600ms, return" | "passthrough" | "ignore".
+/// A bare number or Nms/Ns step is a pause before the next keystroke.
+func parseAction(_ raw: String) -> Action? {
+    let trimmed = raw.trimmingCharacters(in: .whitespaces)
+    switch trimmed.lowercased() {
+    case "passthrough": return .passthrough
+    case "ignore", "none", "": return .ignore
+    default: break
+    }
+
+    var steps: [Step] = []
+    for piece in trimmed.split(separator: ",") {
+        let token = piece.trimmingCharacters(in: .whitespaces)
+        if token.isEmpty { continue }
+        if let delay = parseDelay(token) { steps.append(.delay(delay)); continue }
+        guard let key = parseKey(token) else { return nil }
+        steps.append(.key(key))
+    }
+    return steps.isEmpty ? nil : .sequence(steps)
+}
+
+private func parseDelay(_ token: String) -> TimeInterval? {
+    let lower = token.lowercased()
+    if lower.hasSuffix("ms"), let v = Double(lower.dropLast(2)) { return v / 1000 }
+    if lower.hasSuffix("s"), let v = Double(lower.dropLast(1)) { return v }
+    if let v = Double(lower) { return v / 1000 }   // bare number = milliseconds
+    return nil
 }
 
 // MARK: - Config
@@ -92,29 +129,27 @@ struct AppBinding {
     var actions: [Gesture: Action]
     /// Optional bundle name for passthrough ("Spotify", "Music"); nil = auto-detect.
     var passthroughApp: String?
-    /// Key posted after a single press that STOPS dictation, so one gesture stops and
-    /// submits. Nil disables; the explicit submit gesture is the robust alternative.
-    var autoSubmitOnStop: KeySpec?
-    var autoSubmitDelay: TimeInterval = 0.6
+    /// Optional second action per gesture. Successive presses alternate between the
+    /// primary and this one, which is how one gesture can both start a toggle and, on the
+    /// next press, run a longer sequence (stop, wait, submit).
+    var alternates: [Gesture: Action] = [:]
 }
 
 let defaultConfigJSON = """
 {
-  "_comment": "Gestures map to an action: a key spec (\\"cmd+d\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". Apps not listed are left alone - the Now Playing slot is released when they are focused, so your media keys behave normally. Requires voice.mode \\"tap\\" in ~/.claude/settings.json; see the README.",
+  "_comment": "An action is a key spec, a comma-separated sequence with pauses (\\"cmd+d, 600ms, return\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". <gesture>Alternate gives a gesture a second action that successive presses alternate to. Apps not listed are left alone. Requires voice.mode \\"tap\\" in ~/.claude/settings.json; see the README.",
   "inputDevice": "MacBook Pro Microphone",
   "com.anthropic.claudefordesktop": {
     "single": "cmd+d",
+    "singleAlternate": "cmd+d, 600ms, return",
     "double": "return",
-    "triple": "passthrough",
-    "autoSubmitOnStop": "return",
-    "autoSubmitDelayMs": "600"
+    "triple": "passthrough"
   },
   "com.microsoft.VSCode": {
     "single": "cmd+d",
+    "singleAlternate": "cmd+d, 600ms, return",
     "double": "return",
-    "triple": "passthrough",
-    "autoSubmitOnStop": "return",
-    "autoSubmitDelayMs": "600"
+    "triple": "passthrough"
   },
   "com.apple.Terminal": {
     "single": "space",
@@ -185,17 +220,19 @@ func loadConfig() -> Config {
             actions[gesture] = action
         }
         guard !actions.isEmpty else { continue }
-        var submitKey: KeySpec?
-        if let raw = spec["autoSubmitOnStop"] {
-            if case .key(let k)? = parseAction(raw) { submitKey = k }
-            else { print("skipping \(bundleId).autoSubmitOnStop: \"\(raw)\" is not a key spec") }
+        var alternates: [Gesture: Action] = [:]
+        for gesture in Gesture.allCases {
+            guard let raw = spec["\(gesture.rawValue)Alternate"] else { continue }
+            guard let action = parseAction(raw) else {
+                print("skipping \(bundleId).\(gesture.rawValue)Alternate: unrecognised action \"\(raw)\"")
+                continue
+            }
+            alternates[gesture] = action
         }
-        let delay = (spec["autoSubmitDelayMs"].flatMap(Double.init) ?? 600) / 1000.0
         config.apps[bundleId] = AppBinding(
             actions: actions,
             passthroughApp: spec["passthroughApp"],
-            autoSubmitOnStop: submitKey,
-            autoSubmitDelay: delay)
+            alternates: alternates)
     }
     return config
 }
@@ -294,12 +331,11 @@ final class Bridge: NSObject, NSApplicationDelegate {
     private var player: AVAudioPlayer?
     private var config = Config()
     private var warnedMissingInput = false
-    /// When the single press most recently STARTED dictation, per app. We are the only
-    /// thing sending the toggle, so parity tells us whether the next press stops it.
-    private var dictationStarted: [String: Date] = [:]
-    /// Assume dictation is no longer running after this long, to limit drift from a
-    /// manual keypress we never saw.
-    private let dictationStaleAfter: TimeInterval = 120
+    /// For gestures with an alternate action: when the primary last fired, per app+gesture.
+    /// Nothing else sends these keys, so alternation tracks the app's toggle state.
+    private var primaryFiredAt: [String: Date] = [:]
+    /// Treat alternation as reset after this long, limiting drift from a keypress by hand.
+    private let alternationStaleAfter: TimeInterval = 120
     private var holdingSlot = false
     private var lastFire: [Gesture: Date] = [:]
 
@@ -339,9 +375,13 @@ final class Bridge: NSObject, NSApplicationDelegate {
 
         print("airpods-keybind running. Config: \(configPath)")
         for (bundleId, binding) in config.apps.sorted(by: { $0.key < $1.key }) {
-            let summary = Gesture.allCases.compactMap { g in
-                binding.actions[g].map { "\(g.rawValue)=\($0.label)" }
-            }.joined(separator: "  ")
+            let summary = Gesture.allCases.compactMap { g -> String? in
+                guard let action = binding.actions[g] else { return nil }
+                if let alt = binding.alternates[g] {
+                    return "\(g.rawValue)=\(action.label) | then \(alt.label)"
+                }
+                return "\(g.rawValue)=\(action.label)"
+            }.joined(separator: "\n      ")
             print("  \(bundleId)\n      \(summary)")
         }
         print("\nUnlisted apps are untouched — the slot is released when they are focused.")
@@ -423,7 +463,7 @@ final class Bridge: NSObject, NSApplicationDelegate {
             player?.pause()
             info.playbackState = .stopped
             info.nowPlayingInfo = nil
-            dictationStarted.removeAll()
+            primaryFiredAt.removeAll()
             print("[\(stamp())] released slot")
         }
     }
@@ -455,31 +495,52 @@ final class Bridge: NSObject, NSApplicationDelegate {
             return
         }
 
-        switch action {
+        let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+        var chosen = action
+        var note = ""
+        if let alternate = binding.alternates[gesture] {
+            let stateKey = "\(bundleId)|\(gesture.rawValue)"
+            let primaryActive = primaryFiredAt[stateKey].map {
+                Date().timeIntervalSince($0) < alternationStaleAfter
+            } ?? false
+            if primaryActive {
+                primaryFiredAt[stateKey] = nil
+                chosen = alternate
+                note = " [alternate]"
+            } else {
+                primaryFiredAt[stateKey] = Date()
+                note = " [primary]"
+            }
+        }
+
+        switch chosen {
         case .ignore:
             print("[\(stamp())] \(gesture.rawValue) -> ignored")
-        case .key(let spec):
-            post(spec)
-            if gesture == .single, let submit = binding.autoSubmitOnStop,
-               let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
-                if let started = dictationStarted[bundleId],
-                   Date().timeIntervalSince(started) < dictationStaleAfter {
-                    dictationStarted[bundleId] = nil
-                    let ms = Int(binding.autoSubmitDelay * 1000)
-                    print("[\(stamp())] \(gesture.rawValue) -> \(spec.label) (stop) + \(submit.label) in \(ms)ms")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + binding.autoSubmitDelay) { [weak self] in
-                        self?.post(submit)
-                    }
-                } else {
-                    dictationStarted[bundleId] = Date()
-                    print("[\(stamp())] \(gesture.rawValue) -> \(spec.label) (start)")
-                }
-            } else {
-                print("[\(stamp())] \(gesture.rawValue) -> \(spec.label)")
-            }
+        case .sequence(let steps):
+            run(steps)
+            print("[\(stamp())] \(gesture.rawValue) -> \(chosen.label)\(note)")
         case .passthrough:
             let target = forwardToPlayer(gesture, preferred: binding.passthroughApp)
             print("[\(stamp())] \(gesture.rawValue) -> passthrough (\(target))")
+        }
+    }
+
+    /// Post each keystroke, honouring any pauses between them.
+    private func run(_ steps: [Step]) {
+        var offset: TimeInterval = 0
+        for step in steps {
+            switch step {
+            case .delay(let t):
+                offset += t
+            case .key(let spec):
+                if offset == 0 {
+                    post(spec)
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + offset) { [weak self] in
+                        self?.post(spec)
+                    }
+                }
+            }
         }
     }
 
