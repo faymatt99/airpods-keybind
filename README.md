@@ -18,10 +18,12 @@ and receives the command directly.
 
 ## Behaviour
 
-The Now Playing slot is claimed only while a target app is frontmost, and released as soon
-as you switch away, so AirPods play/pause returns to Spotify when you are not coding.
+Owning the Now Playing slot makes this a router rather than a consumer: every gesture
+arrives here first, and each one is dispatched per the config for the app that currently
+has focus — to a keystroke, passed through to the real media player, or dropped.
 
-Next/previous track are left unbound, so double- and triple-press still behave normally.
+The slot is claimed only while a configured app is frontmost and released as soon as you
+switch away, and re-asserted on a heartbeat so another media app cannot quietly take it.
 
 ## Build and run
 
@@ -40,31 +42,50 @@ To see what it is doing:
 `voice.mode: "tap"` in `~/.claude/settings.json` — a single press is instantaneous and
 cannot express hold-to-talk. Already set.
 
-## Key mapping
+## Configuration
 
-Defaults, overridable via `~/.config/airpods-keybind/keymap.json`:
+`~/.config/airpods-keybind/keymap.json`, written with defaults on first run.
 
-| App | Key | Basis |
-| --- | --- | --- |
-| `com.microsoft.VSCode` | `cmd+d` | verified in the extension's own key handler |
-| `com.apple.Terminal`, iTerm2, Warp | `space` | the TUI's `voice:pushToTalk` default |
-| `com.anthropic.claudefordesktop` | `cmd+d` | **unverified** — see below |
+Each focused app maps gestures to actions. macOS does the multi-press detection, so each
+gesture arrives as its own command — no timing logic here.
 
-The desktop app's voice key was not confirmed. If a press types a space or does nothing
-there, change it:
+| Gesture | Arrives as |
+| --- | --- |
+| `single` | `togglePlayPause` |
+| `double` | `nextTrack` |
+| `triple` | `previousTrack` |
 
-    mkdir -p ~/.config/airpods-keybind
-    cat > ~/.config/airpods-keybind/keymap.json <<'JSON'
+An action is one of:
+
+- **a key spec** — `"cmd+d"`, `"space"`, `"shift+tab"`; posted to the focused app
+- **`"passthrough"`** — forwarded to your media player via AppleScript, so music keeps
+  working while the slot is held
+- **`"ignore"`** — swallowed
+
+Apps not listed are left alone entirely: the Now Playing slot is released when they are
+focused, so your media keys behave normally.
+
     {
-      "com.microsoft.VSCode": "cmd+d",
-      "com.anthropic.claudefordesktop": "space",
-      "com.apple.Terminal": "space"
+      "com.microsoft.VSCode": {
+        "single": "cmd+d",
+        "double": "passthrough",
+        "triple": "passthrough"
+      }
     }
-    JSON
+
+Passthrough auto-detects Spotify, then Music. Pin it per app with
+`"passthroughApp": "Spotify"`.
+
+VS Code's `cmd+d` is verified from the extension's own key handler; `space` is the TUI's
+`voice:pushToTalk` default. The Claude desktop app's voice key is **unverified** — flip it
+in the config if a press misbehaves there.
 
 ## Known limits
 
-- One app owns Now Playing at a time. While a target app is frontmost, a stem press
-  drives dictation rather than music.
-- If Spotify does not reclaim the slot after you switch away, play something once and it
-  re-registers.
+- **Left and right cannot be distinguished.** Both stems emit the same AVRCP command, and
+  `MPRemoteCommandEvent` carries only the command and a timestamp. The information is not
+  in the message, so no hook recovers it.
+- Passthrough only reaches scriptable players. Browser audio (YouTube, web players) has no
+  AppleScript surface and will not respond.
+- One app owns Now Playing at a time. Gestures bound to keys are not available to music
+  while a configured app is focused — hence `passthrough` for the ones you want to keep.

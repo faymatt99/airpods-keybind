@@ -1,12 +1,12 @@
-// AirPods stem press -> Claude Code voice dictation.
+// AirPods stem presses -> configurable actions, per focused app.
 //
 // The press is not an input event: it reaches neither a CGEventTap nor the HID layer.
 // macOS delivers it as a MediaRemote command to whichever app owns the Now Playing
-// slot, so this app registers as a Now Playing client to receive it, then posts the
-// voice keystroke to the focused app.
+// slot, so this app registers as a Now Playing client to receive it.
 //
-// The slot is claimed only while a target app is frontmost, so media keys return to
-// Spotify as soon as you switch away.
+// Owning that slot makes this a router: each gesture is dispatched to a keystroke, or
+// passed through to the real media player, or dropped — whatever the config says for
+// the app that currently has focus.
 
 import Cocoa
 import AVFoundation
@@ -14,7 +14,27 @@ import MediaPlayer
 
 setvbuf(stdout, nil, _IONBF, 0)
 
-// MARK: - Key specs
+func stamp() -> String {
+    let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+    return f.string(from: Date())
+}
+
+// MARK: - Gestures
+
+/// macOS does the multi-press detection; each gesture arrives as its own command.
+enum Gesture: String, CaseIterable {
+    case single, double, triple
+
+    var appleScriptVerb: String {
+        switch self {
+        case .single: return "playpause"
+        case .double: return "next track"
+        case .triple: return "previous track"
+        }
+    }
+}
+
+// MARK: - Actions
 
 struct KeySpec {
     let keyCode: CGKeyCode
@@ -22,14 +42,37 @@ struct KeySpec {
     let label: String
 }
 
+enum Action {
+    case key(KeySpec)
+    case passthrough
+    case ignore
+
+    var label: String {
+        switch self {
+        case .key(let k):   return k.label
+        case .passthrough:  return "passthrough"
+        case .ignore:       return "ignore"
+        }
+    }
+}
+
 let keyCodes: [String: CGKeyCode] = [
-    "d": 2, "space": 49, "v": 9, "t": 17, "k": 40, "return": 36, "escape": 53,
+    "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4, "i": 34,
+    "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35, "q": 12,
+    "r": 15, "s": 1, "t": 17, "u": 32, "v": 9, "w": 13, "x": 7, "y": 16, "z": 6,
+    "space": 49, "return": 36, "enter": 36, "escape": 53, "esc": 53, "tab": 48,
+    "delete": 51, "up": 126, "down": 125, "left": 123, "right": 124,
 ]
 
-func parseKeySpec(_ spec: String) -> KeySpec? {
+func parseAction(_ raw: String) -> Action? {
+    switch raw.lowercased() {
+    case "passthrough": return .passthrough
+    case "ignore", "none", "": return .ignore
+    default: break
+    }
     var flags: CGEventFlags = []
     var key: String?
-    for part in spec.lowercased().split(separator: "+").map(String.init) {
+    for part in raw.lowercased().split(separator: "+").map(String.init) {
         switch part {
         case "cmd", "command", "meta": flags.insert(.maskCommand)
         case "ctrl", "control":        flags.insert(.maskControl)
@@ -39,59 +82,98 @@ func parseKeySpec(_ spec: String) -> KeySpec? {
         }
     }
     guard let k = key, let code = keyCodes[k] else { return nil }
-    return KeySpec(keyCode: code, flags: flags, label: spec)
+    return .key(KeySpec(keyCode: code, flags: flags, label: raw))
 }
 
 // MARK: - Config
 
-// bundle id -> key that toggles dictation in that app.
-// VS Code: verified from the extension bundle's own handler (metaKey && "d").
-// Terminals: the TUI's voice:pushToTalk action, default space.
-// Claude desktop: best guess, see README — flip it in the config file if wrong.
-let defaultKeymap: [String: String] = [
-    "com.microsoft.VSCode":            "cmd+d",
-    "com.anthropic.claudefordesktop":  "cmd+d",
-    "com.apple.Terminal":              "space",
-    "com.googlecode.iterm2":           "space",
-    "dev.warp.Warp-Stable":            "space",
-]
+struct AppBinding {
+    var actions: [Gesture: Action]
+    /// Optional bundle name for passthrough ("Spotify", "Music"); nil = auto-detect.
+    var passthroughApp: String?
+}
 
-let configPath = ("~/.config/airpods-keybind/keymap.json" as NSString).expandingTildeInPath
+let defaultConfigJSON = """
+{
+  "_comment": "Each app maps gestures to an action: a key spec (\\"cmd+d\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". Apps not listed here are left alone entirely - the Now Playing slot is released when they are focused, so your media keys behave normally.",
+  "com.microsoft.VSCode": {
+    "single": "cmd+d",
+    "double": "passthrough",
+    "triple": "passthrough"
+  },
+  "com.anthropic.claudefordesktop": {
+    "single": "cmd+d",
+    "double": "passthrough",
+    "triple": "passthrough"
+  },
+  "com.apple.Terminal": {
+    "single": "space",
+    "double": "passthrough",
+    "triple": "passthrough"
+  },
+  "com.googlecode.iterm2": {
+    "single": "space",
+    "double": "passthrough",
+    "triple": "passthrough"
+  }
+}
+"""
 
-func loadKeymap() -> [String: String] {
-    guard let data = FileManager.default.contents(atPath: configPath),
-          let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
-        return defaultKeymap
+let configDir = ("~/.config/airpods-keybind" as NSString).expandingTildeInPath
+let configPath = configDir + "/keymap.json"
+
+func loadConfig() -> [String: AppBinding] {
+    if !FileManager.default.fileExists(atPath: configPath) {
+        try? FileManager.default.createDirectory(atPath: configDir,
+                                                 withIntermediateDirectories: true)
+        try? defaultConfigJSON.write(toFile: configPath, atomically: true, encoding: .utf8)
+        print("wrote default config to \(configPath)")
     }
-    print("loaded keymap override from \(configPath)")
-    return parsed
+
+    guard let data = FileManager.default.contents(atPath: configPath),
+          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        print("could not parse \(configPath) — no apps bound"); return [:]
+    }
+
+    var result: [String: AppBinding] = [:]
+    for (bundleId, value) in root {
+        if bundleId.hasPrefix("_") { continue }
+        guard let spec = value as? [String: String] else {
+            print("skipping \(bundleId): expected an object of gesture -> action"); continue
+        }
+        var actions: [Gesture: Action] = [:]
+        for gesture in Gesture.allCases {
+            guard let raw = spec[gesture.rawValue] else { continue }
+            guard let action = parseAction(raw) else {
+                print("skipping \(bundleId).\(gesture.rawValue): unrecognised action \"\(raw)\"")
+                continue
+            }
+            actions[gesture] = action
+        }
+        guard !actions.isEmpty else { continue }
+        result[bundleId] = AppBinding(actions: actions, passthroughApp: spec["passthroughApp"])
+    }
+    return result
 }
 
-// MARK: - App
+// MARK: - Bridge
 
-func stamp() -> String {
-    let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
-    return f.string(from: Date())
-}
-
-final class VoiceBridge: NSObject, NSApplicationDelegate {
+final class Bridge: NSObject, NSApplicationDelegate {
     private var player: AVAudioPlayer?
-    private var keymap: [String: String] = [:]
+    private var config: [String: AppBinding] = [:]
     private var holdingSlot = false
-    private var lastFire = Date.distantPast
-    private var fireCount = 0
+    private var lastFire: [Gesture: Date] = [:]
 
     func applicationDidFinishLaunching(_ note: Notification) {
-        keymap = loadKeymap()
+        config = loadConfig()
 
         if !AXIsProcessTrustedWithOptions(
             [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         ) {
             print("""
             Accessibility permission is required to post keystrokes.
-            A prompt should have appeared — grant it in
-              System Settings > Privacy & Security > Accessibility
-            Setup continues; presses will start working once granted.
+            Grant it in System Settings > Privacy & Security > Accessibility.
+            Setup continues; keystrokes start working once granted.
             """)
         }
 
@@ -103,63 +185,54 @@ final class VoiceBridge: NSObject, NSApplicationDelegate {
         p.volume = 0.0
         player = p
 
-        bindRemoteCommands()
-
-        let ws = NSWorkspace.shared.notificationCenter
-        ws.addObserver(self, selector: #selector(frontmostChanged),
-                       name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        bindCommands()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(frontmostChanged),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
 
         syncSlot()
         startHeartbeat()
-        print("""
-        airpods-keybind running. Targets:
-        \(keymap.map { "  \($0.key) -> \($0.value)" }.sorted().joined(separator: "\n"))
 
-        The Now Playing slot is claimed only while one of these is frontmost.
-        """)
+        print("airpods-keybind running. Config: \(configPath)")
+        for (bundleId, binding) in config.sorted(by: { $0.key < $1.key }) {
+            let summary = Gesture.allCases.compactMap { g in
+                binding.actions[g].map { "\(g.rawValue)=\($0.label)" }
+            }.joined(separator: "  ")
+            print("  \(bundleId)\n      \(summary)")
+        }
+        print("\nUnlisted apps are untouched — the slot is released when they are focused.")
     }
 
-    private func bindRemoteCommands() {
+    private func bindCommands() {
         let cc = MPRemoteCommandCenter.shared()
-        for cmd in [cc.togglePlayPauseCommand, cc.playCommand, cc.pauseCommand] {
+        let pairs: [(MPRemoteCommand, Gesture)] = [
+            (cc.togglePlayPauseCommand, .single),
+            (cc.playCommand,            .single),
+            (cc.pauseCommand,           .single),
+            (cc.nextTrackCommand,       .double),
+            (cc.previousTrackCommand,   .triple),
+        ]
+        for (cmd, gesture) in pairs {
             cmd.isEnabled = true
             cmd.addTarget { [weak self] _ in
-                self?.fire()
+                self?.dispatch(gesture)
                 return .success
             }
         }
-        // Leave next/prev alone so double/triple press stays available.
-        cc.nextTrackCommand.isEnabled = false
-        cc.previousTrackCommand.isEnabled = false
     }
+
+    // MARK: Slot ownership
 
     @objc private func frontmostChanged() { syncSlot() }
 
-    private func targetKey() -> KeySpec? {
-        guard let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-              let spec = keymap[bundleId] else { return nil }
-        return parseKeySpec(spec)
-    }
-
-    private func startHeartbeat() {
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.reassertSlot()
-        }
-    }
-
-    /// Another app can steal Now Playing without the frontmost app changing, so while a
-    /// target is focused keep restating ownership.
-    private func reassertSlot() {
-        guard holdingSlot, targetKey() != nil else { return }
-        if player?.isPlaying == false { player?.play() }
-        let info = MPNowPlayingInfoCenter.default()
-        if info.playbackState != .playing { info.playbackState = .playing }
-        info.nowPlayingInfo = nowPlayingPayload()
+    private func binding() -> AppBinding? {
+        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return nil }
+        return config[id]
     }
 
     private func nowPlayingPayload() -> [String: Any] {
         [
-            MPMediaItemPropertyTitle: "Claude Code dictation",
+            MPMediaItemPropertyTitle: "airpods-keybind",
             MPNowPlayingInfoPropertyPlaybackRate: 1.0,
             MPMediaItemPropertyPlaybackDuration: 86400.0,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: 0.0,
@@ -167,7 +240,7 @@ final class VoiceBridge: NSObject, NSApplicationDelegate {
     }
 
     private func syncSlot() {
-        let shouldHold = targetKey() != nil
+        let shouldHold = binding() != nil
         guard shouldHold != holdingSlot else { return }
         holdingSlot = shouldHold
 
@@ -185,16 +258,45 @@ final class VoiceBridge: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func fire() {
-        // play + togglePlayPause can both arrive for one press.
-        guard Date().timeIntervalSince(lastFire) > 0.3 else { return }
-        lastFire = Date()
+    private func startHeartbeat() {
+        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self, self.holdingSlot, self.binding() != nil else { return }
+            if self.player?.isPlaying == false { self.player?.play() }
+            let info = MPNowPlayingInfoCenter.default()
+            if info.playbackState != .playing { info.playbackState = .playing }
+            info.nowPlayingInfo = self.nowPlayingPayload()
+        }
+    }
 
-        guard let spec = targetKey() else {
-            print("[\(stamp())] press ignored (frontmost app is not a target)")
+    // MARK: Dispatch
+
+    private func dispatch(_ gesture: Gesture) {
+        // play + togglePlayPause can both arrive for one press.
+        if let last = lastFire[gesture], Date().timeIntervalSince(last) < 0.3 { return }
+        lastFire[gesture] = Date()
+
+        guard let binding = binding() else {
+            print("[\(stamp())] \(gesture.rawValue): focused app is not configured")
+            return
+        }
+        guard let action = binding.actions[gesture] else {
+            print("[\(stamp())] \(gesture.rawValue): no action bound")
             return
         }
 
+        switch action {
+        case .ignore:
+            print("[\(stamp())] \(gesture.rawValue) -> ignored")
+        case .key(let spec):
+            post(spec)
+            print("[\(stamp())] \(gesture.rawValue) -> \(spec.label)")
+        case .passthrough:
+            let target = forwardToPlayer(gesture, preferred: binding.passthroughApp)
+            print("[\(stamp())] \(gesture.rawValue) -> passthrough (\(target))")
+        }
+    }
+
+    private func post(_ spec: KeySpec) {
         let src = CGEventSource(stateID: .combinedSessionState)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: spec.keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: spec.keyCode, keyDown: false) else {
@@ -204,14 +306,34 @@ final class VoiceBridge: NSObject, NSApplicationDelegate {
         up.flags = spec.flags
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+    }
 
-        fireCount += 1
-        print("[\(stamp())] press -> \(spec.label)  (#\(fireCount))")
+    /// Forward the gesture to a scriptable player. Returns the app it went to.
+    @discardableResult
+    private func forwardToPlayer(_ gesture: Gesture, preferred: String?) -> String {
+        let candidates: [String]
+        if let preferred { candidates = [preferred] }
+        else {
+            let running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleIdentifier })
+            var found: [String] = []
+            if running.contains("com.spotify.client") { found.append("Spotify") }
+            if running.contains("com.apple.Music")    { found.append("Music") }
+            candidates = found
+        }
+        guard let app = candidates.first else { return "no player running" }
+
+        let script = "tell application \"\(app)\" to \(gesture.appleScriptVerb)"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        return app
     }
 }
 
 let app = NSApplication.shared
-let bridge = VoiceBridge()
+let bridge = Bridge()
 app.delegate = bridge
 app.setActivationPolicy(.accessory)
 app.run()
