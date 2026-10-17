@@ -108,6 +108,60 @@ Two consequences of tracking alternation:
 
 Keeping a plain submit on another gesture (`"double": "return"`) covers both cases.
 
+### Examples
+
+**One gesture, stop and submit** — the default. Press to start, press again to stop, wait
+for the transcription, and send. Double press is a plain submit in case alternation
+desyncs; triple still skips tracks.
+
+    "com.microsoft.VSCode": {
+      "single": "cmd+d",
+      "singleAlternate": "cmd+d, 600ms, return",
+      "double": "return",
+      "triple": "passthrough"
+    }
+
+**No hidden state** — nothing to desync, at the cost of stopping on a different gesture
+than you started with. Single only ever starts; double stops and submits.
+
+    "com.microsoft.VSCode": {
+      "single": "cmd+d",
+      "double": "cmd+d, 600ms, return",
+      "triple": "passthrough"
+    }
+
+**Music first** — dictation moved off the single press, so play/pause and track-skip behave
+exactly as they always did while coding.
+
+    "com.microsoft.VSCode": {
+      "single": "passthrough",
+      "double": "passthrough",
+      "triple": "cmd+d, 600ms, return"
+    }
+
+**Terminal / TUI** — the TUI's voice key is `space` rather than `cmd+d`. Submit behaviour
+there may differ, so start without the alternate and add it once you have checked.
+
+    "com.apple.Terminal": {
+      "single": "space",
+      "double": "passthrough",
+      "triple": "passthrough"
+    }
+
+**Nothing to do with voice** — gestures are just keystrokes, so bind whatever the focused
+app understands. Here: interrupt on double, and swallow triple so a stray press does
+nothing.
+
+    "com.microsoft.VSCode": {
+      "single": "cmd+d",
+      "double": "escape",
+      "triple": "ignore"
+    }
+
+**Longer chains** — sequences take any number of steps.
+
+    "double": "cmd+d, 900ms, return, 200ms, shift+tab"
+
 ### Pinning the microphone
 
     "inputDevice": "MacBook Pro Microphone"
