@@ -141,13 +141,13 @@ let defaultConfigJSON = """
   "inputDevice": "MacBook Pro Microphone",
   "com.anthropic.claudefordesktop": {
     "single": "cmd+d",
-    "singleAlternate": "cmd+d, 600ms, return",
+    "singleAlternate": "cmd+d, 1s, return",
     "double": "return",
     "triple": "passthrough"
   },
   "com.microsoft.VSCode": {
     "single": "cmd+d",
-    "singleAlternate": "cmd+d, 600ms, return",
+    "singleAlternate": "cmd+d, 1s, return",
     "double": "return",
     "triple": "passthrough"
   },
