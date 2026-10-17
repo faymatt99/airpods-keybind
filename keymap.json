@@ -1,0 +1,28 @@
+{
+  "_comment": "Each app maps gestures to an action: a key spec (\"cmd+d\"), \"passthrough\" to forward to your media player, or \"ignore\". Apps not listed here are left alone entirely - the Now Playing slot is released when they are focused, so your media keys behave normally.",
+  "inputDevice": "MacBook Pro Microphone",
+  "com.microsoft.VSCode": {
+    "single": "cmd+d",
+    "double": "return",
+    "triple": "passthrough",
+    "autoSubmitOnStop": "return",
+    "autoSubmitDelayMs": "600"
+  },
+  "com.anthropic.claudefordesktop": {
+    "single": "cmd+d",
+    "double": "return",
+    "triple": "passthrough",
+    "autoSubmitOnStop": "return",
+    "autoSubmitDelayMs": "600"
+  },
+  "com.apple.Terminal": {
+    "single": "space",
+    "double": "passthrough",
+    "triple": "passthrough"
+  },
+  "com.googlecode.iterm2": {
+    "single": "space",
+    "double": "passthrough",
+    "triple": "passthrough"
+  }
+}

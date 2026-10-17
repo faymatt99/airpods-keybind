@@ -39,12 +39,31 @@ To see what it is doing:
 
 ## Requires
 
-`voice.mode: "tap"` in `~/.claude/settings.json` — a single press is instantaneous and
-cannot express hold-to-talk. Already set.
+Voice mode in `~/.claude/settings.json` — shared by the Claude Code TUI and the VS Code
+extension:
+
+    {
+      "voice": {
+        "enabled": true,
+        "mode": "tap"
+      }
+    }
+
+`mode` must be `"tap"`. The default is `"hold"` (hold-to-talk), and an AirPods press is
+instantaneous — it cannot express a hold, so on the default the keystroke does nothing
+useful. `"tap"` is tap to start, tap to stop.
+
+`voice.autoSubmit` does **not** help here: it is documented as hold-mode only. Tap mode
+stops recording without submitting, which is what `autoSubmitOnStop` below is for.
 
 ## Configuration
 
-`~/.config/airpods-keybind/keymap.json`, written with defaults on first run.
+`keymap.json` in this directory, written with defaults on first run. Kept next to the
+source so it is findable from the project rather than buried in `~/.config`.
+
+Resolution order: `$AIRPODS_KEYBIND_CONFIG`, then this repo (detected by `build.sh`
+sitting one level above the app bundle), then `~/.config/airpods-keybind/keymap.json` for
+when the app has been copied away from its repo.
 
 Each focused app maps gestures to actions. macOS does the multi-press detection, so each
 gesture arrives as its own command — no timing logic here.

@@ -100,17 +100,21 @@ struct AppBinding {
 
 let defaultConfigJSON = """
 {
-  "_comment": "Each app maps gestures to an action: a key spec (\\"cmd+d\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". Apps not listed here are left alone entirely - the Now Playing slot is released when they are focused, so your media keys behave normally.",
+  "_comment": "Gestures map to an action: a key spec (\\"cmd+d\\"), \\"passthrough\\" to forward to your media player, or \\"ignore\\". Apps not listed are left alone - the Now Playing slot is released when they are focused, so your media keys behave normally. Requires voice.mode \\"tap\\" in ~/.claude/settings.json; see the README.",
   "inputDevice": "MacBook Pro Microphone",
-  "com.microsoft.VSCode": {
-    "single": "cmd+d",
-    "double": "passthrough",
-    "triple": "passthrough"
-  },
   "com.anthropic.claudefordesktop": {
     "single": "cmd+d",
-    "double": "passthrough",
-    "triple": "passthrough"
+    "double": "return",
+    "triple": "passthrough",
+    "autoSubmitOnStop": "return",
+    "autoSubmitDelayMs": "600"
+  },
+  "com.microsoft.VSCode": {
+    "single": "cmd+d",
+    "double": "return",
+    "triple": "passthrough",
+    "autoSubmitOnStop": "return",
+    "autoSubmitDelayMs": "600"
   },
   "com.apple.Terminal": {
     "single": "space",
@@ -125,8 +129,23 @@ let defaultConfigJSON = """
 }
 """
 
-let configDir = ("~/.config/airpods-keybind" as NSString).expandingTildeInPath
-let configPath = configDir + "/keymap.json"
+/// Config lives next to the source, so it is findable from the project rather than buried
+/// in ~/.config. Falls back to ~/.config when the app has been copied away from its repo.
+let configPath: String = {
+    if let override = ProcessInfo.processInfo.environment["AIRPODS_KEYBIND_CONFIG"] {
+        return override
+    }
+    // .../<repo>/build/AirPodsKeybind.app -> <repo>
+    let repoRoot = Bundle.main.bundleURL
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let marker = repoRoot.appendingPathComponent("build.sh").path
+    if FileManager.default.fileExists(atPath: marker) {
+        return repoRoot.appendingPathComponent("keymap.json").path
+    }
+    return ("~/.config/airpods-keybind/keymap.json" as NSString).expandingTildeInPath
+}()
+let configDir = (configPath as NSString).deletingLastPathComponent
 
 struct Config {
     var apps: [String: AppBinding] = [:]
