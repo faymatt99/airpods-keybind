@@ -192,6 +192,20 @@ The *submit* key differs too. The VS Code extension has a
 Cmd+Enter and Enter makes a newline. Match whichever you use, or the follow-up key in a
 sequence inserts a line break instead of sending.
 
+The desktop app has no such setting, but its Code tab carries the keybindings system, so
+`~/.claude/keybindings.json` works on it. To match the VS Code behaviour there:
+
+    {
+      "bindings": [
+        {
+          "context": "Chat",
+          "bindings": { "enter": "chat:newline", "cmd+return": "chat:submit" }
+        }
+      ]
+    }
+
+That file is read by every Claude Code surface, so it changes terminal sessions too.
+
 ### Pinning the microphone
 
     "inputDevice": "MacBook Pro Microphone"
